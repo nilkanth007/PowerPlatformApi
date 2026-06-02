@@ -29,6 +29,10 @@ builder.Services.AddHttpClient<IPowerPlatformService, PowerPlatformService>()
     .AddPolicyHandler(GetRetryPolicy())
     .AddPolicyHandler(GetCircuitBreakerPolicy());
 
+builder.Services.AddHttpClient<IKeyVaultService, KeyVaultService>()
+    .AddPolicyHandler(GetRetryPolicy())
+    .AddPolicyHandler(GetCircuitBreakerPolicy());
+
 var app = builder.Build();
 
 app.UseSwagger();
