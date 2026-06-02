@@ -149,7 +149,10 @@ namespace PowerPlatform.Api.Services
                                         SecretValue = secret.Value.Value ?? string.Empty,
                                         VaultName = vaultName,
                                         EnvironmentName = env.Name,
-                                        EnvironmentId = env.Id
+                                        EnvironmentId = env.Id,
+                                        ContentType = secret.Value.Properties.ContentType ?? string.Empty,
+                                        Enabled = secret.Value.Properties.Enabled ?? true,
+                                        ExpiresOn = secret.Value.Properties.ExpiresOn
                                     });
                                 }
                             }

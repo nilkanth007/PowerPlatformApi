@@ -19,6 +19,30 @@ namespace PowerPlatform.Api.Services
         private readonly ILogger<PowerPlatformService> _logger;
         
         private readonly Dictionary<string, (string Token, DateTimeOffset ExpiresOn)> _tokenCache = new();
+        private Dictionary<string, string>? _envNameCache = null;
+
+        private async Task<string> GetEnvironmentNameAsync(string environmentId)
+        {
+            if (_envNameCache == null)
+            {
+                try
+                {
+                    var envs = await GetEnvironmentsAsync();
+                    _envNameCache = envs.ToDictionary(e => e.EnvironmentId, e => e.EnvironmentName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to build environment name cache");
+                    _envNameCache = new Dictionary<string, string>();
+                }
+            }
+
+            if (_envNameCache.TryGetValue(environmentId, out var name))
+            {
+                return name;
+            }
+            return environmentId;
+        }
 
         public PowerPlatformService(HttpClient httpClient, IConfiguration configuration, ILogger<PowerPlatformService> logger)
         {
@@ -93,16 +117,39 @@ namespace PowerPlatform.Api.Services
             var json = JObject.Parse(content);
             var flows = new List<FlowModel>();
 
+            var envName = await GetEnvironmentNameAsync(environmentId);
+
             var valueArray = json["value"] as JArray;
             if (valueArray != null)
             {
                 foreach (var item in valueArray)
                 {
+                    var flowId = item["name"]?.ToString() ?? string.Empty;
+                    var flowName = item["properties"]?["displayName"]?.ToString() ?? string.Empty;
+                    var createdStr = item["properties"]?["createdTime"]?.ToString();
+                    var modifiedStr = item["properties"]?["lastModifiedTime"]?.ToString();
+
+                    System.DateTime? created = null;
+                    if (System.DateTime.TryParse(createdStr, out var cVal)) created = cVal;
+
+                    System.DateTime? modified = null;
+                    if (System.DateTime.TryParse(modifiedStr, out var mVal)) modified = mVal;
+
+                    var flowLink = $"https://make.powerautomate.com/environments/{environmentId}/flows/{flowId}/details";
+
                     flows.Add(new FlowModel
                     {
-                        FlowId = item["name"]?.ToString() ?? string.Empty,
-                        FlowName = item["properties"]?["displayName"]?.ToString() ?? string.Empty,
-                        State = item["properties"]?["state"]?.ToString() ?? string.Empty
+                        FlowId = flowId,
+                        FlowName = flowName,
+                        State = item["properties"]?["state"]?.ToString() ?? string.Empty,
+
+                        ObjectId = flowId,
+                        ObjectName = flowName,
+                        ObjectCreated = created,
+                        ObjectModified = modified,
+                        ObjectLink = flowLink,
+                        ObjectType = "Flow",
+                        EnvironmentName = envName
                     });
                 }
             }

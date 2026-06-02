@@ -21,5 +21,14 @@ namespace PowerPlatform.Api.Models
 
         [JsonProperty("environmentId")]
         public string EnvironmentId { get; set; } = string.Empty;
+
+        [JsonProperty("contentType")]
+        public string ContentType { get; set; } = string.Empty;
+
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = true;
+
+        [JsonProperty("expiresOn")]
+        public System.DateTimeOffset? ExpiresOn { get; set; }
     }
 }
