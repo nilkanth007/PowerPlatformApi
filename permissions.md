@@ -2,43 +2,49 @@
 
 This document outlines the required Azure Active Directory (Microsoft Entra ID), Azure Key Vault, and Power Platform permissions necessary for the Power Platform API project to function.
 
+> **Auth model:** The application uses the **OAuth 2.0 Client Credentials** (app-only) flow via MSAL with an **Azure AD App Registration**. There is no user sign-in. All permissions below must be granted as **Application** permissions, not Delegated.
+>
+> **Key Vault:** The official project's existing **Key Vault Access Policy** is used — no new policy is required. The App Registration's service principal must be added to that existing policy with `Get` and `List` secret permissions.
+
 ---
 
-## 1. Microsoft Entra ID App Registration (Local Development)
-For local development, add the following API permissions to your App Registration in the Azure Portal under **App Registrations** > **API Permissions** > **Add a permission**:
+## 1. Microsoft Entra ID App Registration
+
+Add the following **Application** permissions in the Azure Portal under **App Registrations → API Permissions → Add a permission**. Grant admin consent after adding each permission.
 
 ### Power Platform & Flow APIs
-*   **Microsoft Flow Service** (API Name: `Microsoft Flow Service`)
-    *   `Flows.Read.All` (Delegated/Application) — Allows reading flow metadata.
-*   **PowerApps Service** (API Name: `PowerApps Service`)
-    *   `User` (Delegated) — Allows signing in and reading user profiles.
-*   **Power Platform API** (Modern Power Platform Admin/Runtime API)
-    *   `Environment.Read.All` (Application/Delegated) — Allows listing environments.
-    *   `App.Read.All` (Application/Delegated) — Allows reading app definitions.
-    *   `Flow.Read.All` (Application/Delegated) — Allows reading flow definitions.
+
+| API | Permission | Type | Purpose |
+|---|---|---|---|
+| **Microsoft Flow Service** (`api.flow.microsoft.com`) | `Flows.Read.All` | Application | List and read flow metadata and definitions |
+| **Power Platform API** (`api.bap.microsoft.com`) | `Environment.Read.All` | Application | List Power Platform environments |
+| **Power Platform API** (`api.bap.microsoft.com`) | `Flow.Read.All` | Application | Read flow definitions per environment |
+
+> **Note:** Do not add `PowerApps Service → User (Delegated)` or `App.Read.All` — these are not used by the application.
 
 ---
 
-## 2. Azure Key Vault Resource Access
-For service-to-service calls, permissions must be assigned directly on the Key Vault resource itself in the Azure Portal. Assign this to your **App Registration** (for local development) and/or your **Managed Identity** (for Azure deployment):
+## 2. Azure Key Vault Access
 
-### Option A: Azure RBAC Model (Recommended)
-Assign the following built-in role to your App/Identity at the Key Vault, Resource Group, or Subscription scope:
-*   **Role:** `Key Vault Secrets User`
-*   *Includes:*
-    *   `Microsoft.KeyVault/vaults/secrets/getSecret/action` (Read secret values)
-    *   `Microsoft.KeyVault/vaults/secrets/readMetadata/action` (List secret properties/metadata)
+The application uses the Azure SDK `SecretClient` with `ClientSecretCredential` (or `DefaultAzureCredential` as fallback). It calls both `GetPropertiesOfSecretsAsync` (list) and `GetSecretAsync` (get value), so both `Get` and `List` secret permissions are required.
 
-### Option B: Vault Access Policies Model
-Add an access policy on your Key Vault with the following selected permissions:
-*   **Secret Permissions:** `Get` and `List`
+### Current Setup — Existing Official Project Access Policy
+
+The official project already has a Key Vault Access Policy in place. The App Registration's service principal must be added to that existing policy:
+
+1. In the Azure Portal, navigate to your **Key Vault → Access policies**.
+2. Click **Create** (or **Add Access Policy** on older vaults).
+3. Under **Secret permissions**, select `Get` and `List`.
+4. Under **Principal**, search for and select your **App Registration** by name or Client ID.
+5. Click **Save**.
+
+> No new Key Vault or policy needs to be created — simply add the App Registration to the existing official project policy.
 
 ---
 
 ## 3. Power Platform Management Registration
-To enable environment discovery via the BAP API (`api.bap.microsoft.com`), you must register the App Registration Client ID (for local development) and/or the Managed Identity App ID (for Azure deployment) as an administrator application in your Power Platform tenant. 
 
-A Power Platform/Tenant Administrator must execute the following PowerShell commands:
+To allow environment discovery via the BAP API (`api.bap.microsoft.com`), the app's Client ID must be registered as an administrator application in your Power Platform tenant. A Power Platform/Tenant Administrator must run:
 
 ```powershell
 # 1. Install the administration module
@@ -53,21 +59,63 @@ New-PowerAppManagementApp -ApplicationId <YourClientID_or_ManagedIdentityClientI
 
 ---
 
-## 4. Azure Deployment (Managed Identity)
-When deploying this web API to Azure App Service, it is best practice to use **Managed Identities** to eliminate the need for storing client secrets in configuration files. The application's backend automatically falls back to `DefaultAzureCredential` when no client secret is specified.
+## 4. Key Vault URI Configuration (Required)
+
+The application does **not** auto-discover Key Vaults via Azure Resource Manager. Vault URIs must be explicitly configured in `appsettings.json`. Add one or both of the following sections:
+
+```json
+{
+  "AzureAd": {
+    "TenantId": "YOUR_TENANT_ID",
+    "ClientId": "YOUR_CLIENT_ID",
+    "ClientSecret": "YOUR_CLIENT_SECRET"
+  },
+  "KeyVaults": {
+    "Global": [
+      "https://<vault-name>.vault.azure.net/"
+    ],
+    "<EnvironmentId>": [
+      "https://<env-specific-vault>.vault.azure.net/"
+    ]
+  }
+}
+```
+
+- `KeyVaults:Global` — vaults queried for every environment.
+- `KeyVaults:{EnvironmentId}` — vaults scoped to a specific Power Platform environment ID.
+
+> **Note:** `AzureAd:SubscriptionId` appears in the default `appsettings.json` but is not used by the current codebase. It can be omitted.
+
+---
+
+## 5. Azure Deployment (Managed Identity)
+
+When deploying to Azure App Service, you can eliminate the stored `ClientSecret` using **Managed Identity**, but support is partial — see the table below.
+
+| Service | Managed Identity supported? | Notes |
+|---|---|---|
+| `PowerPlatformService` | ✅ Yes | Falls back to `DefaultAzureCredential` when `ClientSecret` is empty or placeholder |
+| `KeyVaultService` — vault access | ✅ Yes | Uses `DefaultAzureCredential` when `ClientSecret` is empty or placeholder |
+| `KeyVaultService` — BAP/environment calls | ❌ No | `GetAccessTokenAsync` in `KeyVaultService` always uses MSAL client credentials; `ClientSecret` is required |
+
+**Practical guidance:** `ClientSecret` is required as long as `KeyVaultService` makes BAP API calls. For full Managed Identity support, `KeyVaultService.GetAccessTokenAsync` would need to be updated to include the same `DefaultAzureCredential` fallback that `PowerPlatformService` uses.
 
 ### Step 1: Enable Managed Identity on App Service
-1. In the Azure Portal, navigate to your **App Service**.
-2. Under **Settings**, click on **Identity**.
-3. Under the **System assigned** tab, switch **Status** to **On** and click **Save**.
-4. Take note of the **Object ID** (Service Principal ID) and the **Client ID** of the generated identity.
 
-### Step 2: Grant Resource Permissions to the Managed Identity
-*   **For Key Vault:** Assign the `Key Vault Secrets User` role (or Access Policy `Get`/`List` permissions) to the App Service's Managed Identity principal.
-*   **For Power Platform Admin API:** Run the PowerShell registration command (shown in Section 3) using the Managed Identity's **Client ID** as the `-ApplicationId`.
+1. Navigate to your **App Service → Settings → Identity**.
+2. Under **System assigned**, switch **Status** to **On** and click **Save**.
+3. Note the **Object ID** (Service Principal ID) and **Client ID**.
 
-### Step 3: Configure Environment Variables in App Service
-In the Azure Portal, navigate to **App Service** > **Settings** > **Configuration** > **Application settings** (or Environment variables) and add:
-*   `AzureAd:TenantId` = `<Your Tenant ID>`
-*   `AzureAd:ClientId` = (Only required if using a User-Assigned Managed Identity. Leave empty/undefined for System-Assigned Managed Identity)
-*   `AzureAd:ClientSecret` = (Leave empty/undefined. Do not store secrets here!)
+### Step 2: Grant Permissions to the Managed Identity
+
+- **Key Vault:** Assign the `Key Vault Secrets User` role (or Access Policy `Get`/`List`) to the Managed Identity.
+- **Power Platform:** Run the PowerShell command in Section 3 using the Managed Identity's **Client ID**.
+
+### Step 3: Configure App Service Application Settings
+
+| Setting | Value |
+|---|---|
+| `AzureAd:TenantId` | Your Tenant ID |
+| `AzureAd:ClientId` | Your App Registration Client ID |
+| `AzureAd:ClientSecret` | Required (see table above) |
+| `KeyVaults:Global` | JSON array of vault URIs, e.g. `["https://myvault.vault.azure.net/"]` |
