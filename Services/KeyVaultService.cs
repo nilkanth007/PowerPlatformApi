@@ -122,12 +122,13 @@ namespace PowerPlatform.Api.Services
                 // Convention: Look for Key Vault URIs in appsettings under KeyVaults:{envId}
                 // or use a discovery pattern (e.g., kv-{envId}.vault.azure.net)
                 var vaultUris = GetVaultUrisForEnvironment(env.Id);
-
                 var tenantId = _configuration["AzureAd:TenantId"];
                 var clientId = _configuration["AzureAd:ClientId"];
                 var clientSecret = _configuration["AzureAd:ClientSecret"];
 
-                var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                Azure.Core.TokenCredential credential = !string.IsNullOrEmpty(clientSecret) && clientSecret != "YOUR_CLIENT_SECRET"
+                    ? new ClientSecretCredential(tenantId, clientId, clientSecret)
+                    : new DefaultAzureCredential();
 
                 foreach (var vaultUri in vaultUris)
                 {

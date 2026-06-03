@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using Azure.Identity;
 using Microsoft.Identity.Client;
 using Newtonsoft.Json.Linq;
 using PowerPlatform.Api.Models;
@@ -61,19 +62,34 @@ namespace PowerPlatform.Api.Services
             var tenantId = _configuration["AzureAd:TenantId"];
             var clientId = _configuration["AzureAd:ClientId"];
             var clientSecret = _configuration["AzureAd:ClientSecret"];
-            var authority = $"https://login.microsoftonline.com/{tenantId}";
 
-            var app = ConfidentialClientApplicationBuilder.Create(clientId)
-                .WithClientSecret(clientSecret)
-                .WithAuthority(new Uri(authority))
-                .Build();
+            string token;
+            DateTimeOffset expiresOn;
 
-            string[] scopes = new string[] { scope };
-            var result = await app.AcquireTokenForClient(scopes).ExecuteAsync();
-            
-            _tokenCache[scope] = (result.AccessToken, result.ExpiresOn);
+            if (!string.IsNullOrEmpty(clientSecret) && clientSecret != "YOUR_CLIENT_SECRET")
+            {
+                var authority = $"https://login.microsoftonline.com/{tenantId}";
+                var app = ConfidentialClientApplicationBuilder.Create(clientId)
+                    .WithClientSecret(clientSecret)
+                    .WithAuthority(new Uri(authority))
+                    .Build();
 
-            return result.AccessToken;
+                string[] scopes = new string[] { scope };
+                var result = await app.AcquireTokenForClient(scopes).ExecuteAsync();
+                token = result.AccessToken;
+                expiresOn = result.ExpiresOn;
+            }
+            else
+            {
+                var credential = new DefaultAzureCredential();
+                var context = new Azure.Core.TokenRequestContext(new[] { scope });
+                var result = await credential.GetTokenAsync(context);
+                token = result.Token;
+                expiresOn = result.ExpiresOn;
+            }
+
+            _tokenCache[scope] = (token, expiresOn);
+            return token;
         }
 
         public async Task<IEnumerable<EnvironmentModel>> GetEnvironmentsAsync()
